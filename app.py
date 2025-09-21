@@ -14,86 +14,68 @@ def extract_text_from_pdf(file):
                 text += page_text + "\n"
     return text
 
-# --- Parse details from text ---
+# --- Parse details (basic, for testing) ---
 def parse_loan_details(text):
     details = {
         "Customer Name": None,
-        "Customer Address": None,
         "Customer Mobile": None,
         "Guarantor Name": None,
-        "Guarantor Address": None,
         "Guarantor Mobile": None,
         "Loan No": None,
         "Loan Date": None,
-        "Loan Month": None,
-        "Loan Year": None,
         "Loan Amount": None,
         "Loan Interest": None,
         "Agreement Value": None,
-        "Tenure in Months": None,
-        "1st Installment Date": None,
-        "Last Installment Date": None,
         "Receipt Amount": None,
         "Arrears Amount": None,
         "Settlement Total": None
     }
 
-    # --- Customer details ---
-    cust_name = re.search(r"CUSTOMER DETAILS.*?Name\s*:(.+)", text, re.S)
+    # Simple regex patterns (to be tuned based on debug output)
+    cust_name = re.search(r"Name\s*:\s*(.+)", text)
     if cust_name:
         details["Customer Name"] = cust_name.group(1).split("\n")[0].strip()
 
-    cust_mobile = re.search(r"Mobile No:([0-9]{6,})", text)
+    cust_mobile = re.search(r"Mobile No:\s*([0-9]{6,})", text)
     if cust_mobile:
-        details["Customer Mobile"] = cust_mobile.group(1).strip()
+        details["Customer Mobile"] = cust_mobile.group(1)
 
-    # --- Guarantor details ---
-    guar_name = re.search(r"GUARANTOR DETAILS.*?Name\s*:(.+)", text, re.S)
-    if guar_name:
-        details["Guarantor Name"] = guar_name.group(1).split("\n")[0].strip()
+    loan_no = re.search(r"(UTNGR\d+)", text)
+    if loan_no:
+        details["Loan No"] = loan_no.group(1)
 
-    mobiles = re.findall(r"Mobile No:([0-9]{6,})", text)
-    if len(mobiles) > 1:
-        details["Guarantor Mobile"] = mobiles[1]
+    loan_date = re.search(r"(\d{2}/\d{2}/\d{4})", text)
+    if loan_date:
+        details["Loan Date"] = loan_date.group(1)
 
-    # --- Loan summary ---
-    loan = re.search(
-        r"(UTNGR\d+)\s+(\d{2}/\d{2}/\d{4})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+(\d+)\s+(\d{2}/\d{2}/\d{4})\s+(\d{2}/\d{2}/\d{4})",
-        text
-    )
-    if loan:
-        details["Loan No"] = loan.group(1)
-        details["Loan Date"] = loan.group(2)
-        details["Loan Amount"] = float(loan.group(3).replace(",", ""))
-        details["Loan Interest"] = float(loan.group(4).replace(",", ""))
-        details["Tenure in Months"] = int(loan.group(5))
-        details["1st Installment Date"] = loan.group(6)
-        details["Last Installment Date"] = loan.group(7)
+    loan_amount = re.search(r"Loan Amount\s*:?([\d,]+\.\d{2})", text)
+    if loan_amount:
+        details["Loan Amount"] = float(loan_amount.group(1).replace(",", ""))
+
+    loan_interest = re.search(r"Loan Interest\s*:?([\d,]+\.\d{2})", text)
+    if loan_interest:
+        details["Loan Interest"] = float(loan_interest.group(1).replace(",", ""))
+
+    if details["Loan Amount"] and details["Loan Interest"]:
         details["Agreement Value"] = details["Loan Amount"] + details["Loan Interest"]
-        parts = details["Loan Date"].split("/")
-        details["Loan Month"] = parts[1]
-        details["Loan Year"] = parts[2]
 
-    # --- Receipt Amount (sum of all receipts) ---
     receipts = re.findall(r"Receipt On Account.*?(\d{1,3}(?:,\d{3})*(?:\.\d{2}))", text)
     if receipts:
-        total = sum([float(r.replace(",", "")) for r in receipts])
-        details["Receipt Amount"] = total
+        details["Receipt Amount"] = sum(float(r.replace(",", "")) for r in receipts)
 
-    # --- Arrears ---
-    arrears = re.findall(r"Arrears As On.*?(\d{1,3}(?:,\d{3})*(?:\.\d{2}))", text)
+    arrears = re.search(r"Arrears As On.*?(\d{1,3}(?:,\d{3})*(?:\.\d{2}))", text)
     if arrears:
-        details["Arrears Amount"] = float(arrears[-1].replace(",", ""))
+        details["Arrears Amount"] = float(arrears.group(1).replace(",", ""))
 
-    # --- Settlement ---
-    settlement = re.findall(r"Settlement.*?(\d{1,3}(?:,\d{3})*(?:\.\d{2}))", text)
+    settlement = re.search(r"Settlement.*?(\d{1,3}(?:,\d{3})*(?:\.\d{2}))", text)
     if settlement:
-        details["Settlement Total"] = float(settlement[-1].replace(",", ""))
+        details["Settlement Total"] = float(settlement.group(1).replace(",", ""))
 
     return details
 
+
 # --- Streamlit UI ---
-st.title("📑 Loan SOA PDF Extractor → Excel")
+st.title("📑 Loan SOA PDF Extractor → Debug Mode")
 
 uploaded_files = st.file_uploader("Upload SOA PDFs", type=["pdf"], accept_multiple_files=True)
 
@@ -101,10 +83,25 @@ if uploaded_files:
     data = []
     for uploaded_file in uploaded_files:
         text = extract_text_from_pdf(uploaded_file)
+
+        # 🔍 Debug: Show extracted text
+        st.subheader(f"Extracted Text: {uploaded_file.name}")
+        st.text_area("Raw Text", text[:2000])  # first 2000 chars only
+
+        # Parse details
         details = parse_loan_details(text)
         data.append(details)
 
+        # Also allow download of raw text
+        st.download_button(
+            label=f"Download Extracted Text ({uploaded_file.name})",
+            data=text,
+            file_name=uploaded_file.name.replace(".pdf", ".txt"),
+            mime="text/plain"
+        )
+
     df = pd.DataFrame(data)
+    st.subheader("Parsed Data Preview")
     st.dataframe(df)
 
     # Excel download
